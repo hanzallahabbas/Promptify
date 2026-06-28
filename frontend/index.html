@@ -1,0 +1,889 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Promptify — AI Prompt Sanitization</title>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg:      #0a0b0f; --bg2: #111318; --bg3: #181b22; --bg4: #1e2128;
+      --border:  #252932; --border2: #2f3440;
+      --accent:  #4f8ef7; --accent2: #3d7aee;
+      --green:   #22c55e; --yellow: #f59e0b; --red: #ef4444;
+      --text1:   #f0f2f7; --text2:  #8b92a5; --text3: #555d6e;
+      --mono:    'JetBrains Mono', monospace;
+      --sans:    'Space Grotesk', sans-serif;
+      --r:       12px; --r-sm: 8px;
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; }
+    body { font-family: var(--sans); background: var(--bg); color: var(--text1); -webkit-font-smoothing: antialiased; }
+    body::before {
+      content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 0;
+      background-image: linear-gradient(rgba(79,142,247,.03) 1px, transparent 1px),
+                        linear-gradient(90deg, rgba(79,142,247,.03) 1px, transparent 1px);
+      background-size: 40px 40px;
+    }
+    ::-webkit-scrollbar{width:5px;} ::-webkit-scrollbar-track{background:var(--bg2);} ::-webkit-scrollbar-thumb{background:var(--border2);border-radius:3px;}
+
+    /* ══ AUTH SCREEN ══════════════════════════════════════ */
+    #auth-screen { min-height:100vh; display:none; align-items:center; justify-content:center; padding:2rem; position:relative; z-index:1; }
+    #auth-screen.active { display:flex; }
+    .auth-card { width:100%; max-width:400px; background:var(--bg2); border:1px solid var(--border); border-radius:16px; padding:2.5rem; animation:fadeUp .5s ease; }
+    .auth-logo { display:flex; align-items:center; gap:10px; margin-bottom:2rem; }
+    .shield { width:30px; height:30px; background:var(--accent); clip-path:polygon(50% 0%,100% 20%,100% 60%,50% 100%,0% 60%,0% 20%); display:flex; align-items:center; justify-content:center; position:relative; flex-shrink:0; }
+    .shield::after { content:'✓'; position:absolute; color:#fff; font-size:13px; font-weight:700; }
+    .auth-brand { font-size:20px; font-weight:700; }
+    .auth-brand span { color:var(--accent); }
+    .auth-tabs { display:flex; background:var(--bg3); border-radius:8px; padding:4px; margin-bottom:1.75rem; }
+    .auth-tab { flex:1; padding:8px; text-align:center; font-size:13px; font-weight:600; border-radius:6px; cursor:pointer; color:var(--text2); transition:all .2s; border:none; background:transparent; }
+    .auth-tab.active { background:var(--accent); color:#fff; }
+    .auth-form { display:none; flex-direction:column; gap:14px; }
+    .auth-form.active { display:flex; }
+    .field-label { font-size:12px; font-family:var(--mono); color:var(--text3); text-transform:uppercase; letter-spacing:.5px; margin-bottom:5px; }
+    .field-input { width:100%; padding:11px 14px; background:var(--bg3); border:1px solid var(--border2); border-radius:8px; color:var(--text1); font-family:var(--sans); font-size:14px; outline:none; transition:border-color .2s, box-shadow .2s; }
+    .field-input:focus { border-color:var(--accent); box-shadow:0 0 0 3px rgba(79,142,247,.15); }
+    .btn-primary { width:100%; padding:12px; background:var(--accent); color:#fff; border:none; border-radius:8px; font-family:var(--sans); font-size:14px; font-weight:600; cursor:pointer; transition:background .2s; }
+    .btn-primary:hover { background:var(--accent2); }
+    .auth-msg { font-size:12px; font-family:var(--mono); padding:10px 12px; border-radius:6px; display:none; }
+    .auth-msg.error { background:rgba(239,68,68,.1); color:var(--red); border:1px solid rgba(239,68,68,.25); display:block; }
+    .auth-msg.success { background:rgba(34,197,94,.1); color:var(--green); border:1px solid rgba(34,197,94,.25); display:block; }
+
+    /* ══ APP SCREEN ════════════════════════════════════════ */
+    #app-screen { height:100vh; display:none; flex-direction:column; position:relative; z-index:1; }
+    #app-screen.active { display:flex; }
+
+    /* ── NAV ── */
+    nav { display:flex; align-items:center; justify-content:space-between; padding:0 1.25rem; height:52px; background:rgba(10,11,15,.9); backdrop-filter:blur(16px); border-bottom:1px solid var(--border); flex-shrink:0; z-index:100; }
+    .nav-left { display:flex; align-items:center; gap:10px; }
+    .nav-brand { font-size:17px; font-weight:700; }
+    .nav-brand span { color:var(--accent); }
+    .nav-right { display:flex; align-items:center; gap:10px; }
+    .nav-user { font-size:12px; font-family:var(--mono); color:var(--text2); }
+    .nav-user strong { color:var(--text1); }
+    .btn-logout { font-size:12px; font-family:var(--mono); padding:5px 12px; border-radius:6px; border:1px solid var(--border2); background:transparent; color:var(--text2); cursor:pointer; transition:all .15s; }
+    .btn-logout:hover { background:rgba(239,68,68,.1); color:var(--red); border-color:rgba(239,68,68,.3); }
+
+    /* ── BODY LAYOUT ── */
+    .app-body { display:flex; flex:1; overflow:hidden; }
+
+    /* ── SIDEBAR ── */
+    .sidebar { width:220px; flex-shrink:0; background:var(--bg2); border-right:1px solid var(--border); display:flex; flex-direction:column; }
+    .sidebar-header { padding:12px 14px 8px; font-size:10px; font-family:var(--mono); color:var(--text3); text-transform:uppercase; letter-spacing:.6px; border-bottom:1px solid var(--border); }
+    .sidebar-body { flex:1; overflow-y:auto; padding:10px; display:flex; flex-direction:column; gap:6px; }
+    .hist-item { padding:9px 11px; background:var(--bg3); border:1px solid var(--border); border-radius:8px; cursor:pointer; transition:border-color .15s; }
+    .hist-item:hover { border-color:var(--accent); }
+    .hist-text { font-size:11px; font-family:var(--mono); color:var(--text2); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .hist-meta { display:flex; gap:6px; margin-top:4px; align-items:center; }
+    .hist-badge { font-size:10px; font-family:var(--mono); padding:1px 6px; border-radius:4px; }
+    .hist-badge.high { background:rgba(239,68,68,.15); color:var(--red); }
+    .hist-badge.medium { background:rgba(245,158,11,.15); color:var(--yellow); }
+    .hist-badge.low { background:rgba(34,197,94,.15); color:var(--green); }
+    .hist-time { font-size:10px; color:var(--text3); font-family:var(--mono); }
+    .hist-empty { font-size:11px; font-family:var(--mono); color:var(--text3); text-align:center; padding:2rem 1rem; line-height:1.7; }
+    .btn-clear-hist { font-size:11px; font-family:var(--mono); padding:7px; border-radius:6px; border:1px solid var(--border2); background:transparent; color:var(--text3); cursor:pointer; width:100%; margin-top:auto; }
+    .btn-clear-hist:hover { color:var(--red); border-color:rgba(239,68,68,.3); }
+    .sidebar-footer { padding:10px; border-top:1px solid var(--border); }
+
+    /* ── MAIN AREA ── */
+    .main-area { flex:1; display:flex; flex-direction:column; overflow:hidden; }
+
+    /* ── SCROLL ZONE (results + info) ── */
+    .scroll-zone { flex:1; overflow-y:auto; padding:1.25rem 1.5rem; display:flex; flex-direction:column; gap:1rem; }
+
+    /* Welcome state */
+    .welcome { text-align:center; margin:auto; padding:2rem 1rem; }
+    .welcome-icon { font-size:40px; margin-bottom:1rem; }
+    .welcome-title { font-size:22px; font-weight:700; letter-spacing:-.5px; margin-bottom:.5rem; }
+    .welcome-title span { color:var(--accent); }
+    .welcome-sub { font-size:14px; color:var(--text2); line-height:1.7; max-width:420px; margin:0 auto; }
+
+    /* Detection types grid */
+    .detect-grid-wrap { margin-top:1.5rem; }
+    .detect-grid-label { font-size:11px; font-family:var(--mono); color:var(--text3); text-transform:uppercase; letter-spacing:.6px; margin-bottom:10px; text-align:left; }
+    .detect-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(180px, 1fr)); gap:8px; }
+    .detect-item { display:flex; align-items:center; gap:10px; padding:10px 12px; background:var(--bg2); border:1px solid var(--border); border-radius:var(--r-sm); }
+    .detect-icon { font-size:16px; flex-shrink:0; }
+    .detect-name { font-size:12px; font-weight:600; color:var(--text1); }
+    .detect-example { font-size:10px; font-family:var(--mono); color:var(--text3); }
+
+    /* ── RESULTS CARD ── */
+    .result-card { background:var(--bg2); border:1px solid var(--border); border-radius:var(--r); overflow:hidden; animation:fadeUp .3s ease; }
+    .result-card-header { display:flex; align-items:center; gap:10px; padding:12px 16px; background:var(--bg3); border-bottom:1px solid var(--border); }
+    .result-card-title { font-size:13px; font-weight:600; flex:1; }
+    .btn-new { font-size:12px; font-family:var(--mono); padding:5px 12px; border-radius:6px; border:1px solid var(--border2); background:transparent; color:var(--text2); cursor:pointer; transition:all .15s; display:flex; align-items:center; gap:5px; }
+    .btn-new:hover { background:var(--bg3); color:var(--text1); }
+
+    /* Risk bar */
+    .risk-bar { display:flex; align-items:center; gap:12px; padding:12px 16px; border-bottom:1px solid var(--border); }
+    .risk-icon { width:36px; height:36px; border-radius:9px; display:flex; align-items:center; justify-content:center; font-size:17px; flex-shrink:0; }
+    .risk-icon.low { background:rgba(34,197,94,.12); color:var(--green); }
+    .risk-icon.medium { background:rgba(245,158,11,.12); color:var(--yellow); }
+    .risk-icon.high { background:rgba(239,68,68,.12); color:var(--red); }
+    .risk-label { font-size:14px; font-weight:600; }
+    .risk-sub { font-size:11px; font-family:var(--mono); color:var(--text2); margin-top:2px; }
+    .risk-score { margin-left:auto; font-family:var(--mono); font-size:20px; font-weight:500; }
+    .risk-score.low { color:var(--green); } .risk-score.medium { color:var(--yellow); } .risk-score.high { color:var(--red); }
+
+    /* Detection chips */
+    .chips-row { display:flex; flex-wrap:wrap; gap:6px; padding:10px 16px; border-bottom:1px solid var(--border); }
+    .chip { display:flex; align-items:center; gap:6px; padding:5px 10px; background:var(--bg3); border:1px solid var(--border2); border-radius:6px; font-size:11px; font-family:var(--mono); }
+    .chip-dot { width:6px; height:6px; border-radius:50%; }
+    .chip-label { color:var(--text2); } .chip-count { color:var(--text1); font-weight:500; }
+
+    /* Intent note */
+    .intent-note { padding:8px 16px; background:rgba(245,158,11,.07); font-size:12px; color:var(--yellow); font-family:var(--mono); border-bottom:1px solid var(--border); display:none; }
+    .intent-note.visible { display:block; }
+
+    /* Domain pills */
+    .domain-bar { padding:10px 16px; border-bottom:1px solid var(--border); display:none; }
+    .domain-bar.visible { display:block; }
+    .domain-bar-label { font-size:10px; font-family:var(--mono); color:var(--text3); text-transform:uppercase; letter-spacing:.5px; margin-bottom:6px; }
+    .dpills { display:flex; flex-wrap:wrap; gap:5px; }
+    .dpill { font-size:11px; font-family:var(--mono); padding:2px 9px; border-radius:20px; border:1px solid; }
+    .dpill.personal { background:rgba(79,142,247,.1); color:#7eb3ff; border-color:rgba(79,142,247,.3); }
+    .dpill.educational { background:rgba(34,197,94,.1); color:#4ade80; border-color:rgba(34,197,94,.3); }
+    .dpill.government { background:rgba(245,158,11,.1); color:#fbbf24; border-color:rgba(245,158,11,.3); }
+    .dpill.corporate { background:rgba(167,139,250,.1); color:#c4b5fd; border-color:rgba(167,139,250,.3); }
+
+    /* Sanitized output */
+    .output-section { padding:14px 16px; border-bottom:1px solid var(--border); }
+    .output-tabs-row { display:flex; align-items:center; gap:8px; margin-bottom:10px; }
+    .output-tabs-label { font-size:12px; font-weight:600; color:var(--text1); flex:1; }
+    .output-tab { font-size:11px; font-family:var(--mono); padding:3px 10px; border-radius:5px; border:1px solid var(--border2); background:transparent; color:var(--text2); cursor:pointer; transition:all .15s; }
+    .output-tab.active { background:var(--accent); color:#fff; border-color:var(--accent); }
+    .btn-copy { font-size:11px; font-family:var(--mono); padding:3px 10px; border-radius:5px; border:1px solid var(--border2); background:transparent; color:var(--text2); cursor:pointer; transition:all .15s; }
+    .btn-copy:hover { background:var(--bg3); color:var(--text1); }
+    /* Sanitized output box — prominent, clearly readable */
+    .output-highlighted {
+      font-family:var(--mono); font-size:13px; line-height:2.1; color:var(--text1);
+      word-break:break-word; min-height:64px;
+      background:var(--bg3); border:1px solid var(--border2); border-radius:10px;
+      padding:14px 16px;
+    }
+    .output-plain {
+      font-family:var(--mono); font-size:13px; line-height:1.9; color:var(--text1);
+      word-break:break-word; white-space:pre-wrap; min-height:64px; display:none;
+      background:var(--bg3); border:1px solid var(--border2); border-radius:10px;
+      padding:14px 16px;
+    }
+
+    /* PII tags */
+    .pii-tag { display:inline-flex; align-items:center; padding:0 8px; border-radius:4px; font-size:12px; font-weight:500; margin:0 2px; font-family:var(--mono); cursor:default; line-height:1.8; }
+    .pii-tag.email { background:rgba(79,142,247,.15); color:#7eb3ff; border:1px solid rgba(79,142,247,.3); }
+    .pii-tag.phone { background:rgba(236,72,153,.12); color:#f9a8d4; border:1px solid rgba(236,72,153,.3); }
+    .pii-tag.cnic { background:rgba(245,158,11,.12); color:#fbbf24; border:1px solid rgba(245,158,11,.3); }
+    .pii-tag.credit_card,.pii-tag.card_cvc,.pii-tag.card_expiry { background:rgba(239,68,68,.12); color:#fca5a5; border:1px solid rgba(239,68,68,.3); }
+    .pii-tag.person_name { background:rgba(34,197,94,.12); color:#4ade80; border:1px solid rgba(34,197,94,.3); }
+    .pii-tag.medical { background:rgba(251,113,133,.12); color:#fb7185; border:1px solid rgba(251,113,133,.3); }
+    .pii-tag.location { background:rgba(251,191,36,.12); color:#fde68a; border:1px solid rgba(251,191,36,.3); }
+    .pii-tag.warn { background:rgba(245,158,11,.08); color:#fbbf24; border:1px dashed rgba(245,158,11,.5); }
+    .pii-tag.ask { background:transparent; color:#7eb3ff; border:1px dashed rgba(79,142,247,.6); }
+
+    /* Output legend */
+    .output-legend { display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; padding-top:10px; border-top:1px solid var(--border); }
+    .leg-item { display:flex; align-items:center; gap:4px; font-size:10px; font-family:var(--mono); color:var(--text3); }
+    .leg-dot { width:7px; height:7px; border-radius:2px; flex-shrink:0; }
+
+    /* Stats + AI row */
+    .stats-row { display:grid; grid-template-columns:repeat(auto-fill, minmax(110px, 1fr)); gap:8px; padding:12px 16px; border-bottom:1px solid var(--border); }
+    .stat-box { background:var(--bg3); border:1px solid var(--border); border-radius:8px; padding:10px; text-align:center; }
+    .stat-num { font-size:20px; font-weight:700; font-family:var(--mono); color:var(--accent); }
+    .stat-lbl { font-size:10px; font-family:var(--mono); color:var(--text2); margin-top:2px; }
+
+    .ai-row { display:flex; align-items:center; gap:8px; padding:12px 16px; flex-wrap:wrap; }
+    .ai-label { font-size:11px; font-family:var(--mono); color:var(--text3); flex:1; }
+    .btn-ai { padding:8px 14px; border-radius:8px; font-size:12px; font-family:var(--sans); font-weight:600; cursor:pointer; border:none; display:flex; align-items:center; gap:5px; transition:all .2s; }
+    .btn-ai.gpt { background:#10a37f; color:#fff; }
+    .btn-ai.gpt:hover { background:#0d8c6d; }
+    .btn-ai.cpy { background:transparent; border:1px solid var(--border2); color:var(--text2); }
+    .btn-ai.cpy:hover { background:var(--bg3); color:var(--text1); }
+
+    /* Safe banner */
+    .safe-banner { padding:14px 16px; background:rgba(34,197,94,.08); border:1px solid rgba(34,197,94,.25); border-radius:var(--r); font-size:13px; color:var(--green); font-family:var(--mono); display:none; align-items:center; gap:8px; animation:fadeUp .3s ease; }
+    .safe-banner.visible { display:flex; }
+
+    /* ══ INPUT ZONE (Claude-style) ═════════════════════════ */
+    .input-zone { padding:.75rem 1.5rem 1rem; flex-shrink:0; background:linear-gradient(transparent, var(--bg) 25%); }
+
+    /* Example chips */
+    .example-chips { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:8px; }
+    .ex-chip { font-size:11px; font-family:var(--mono); padding:4px 10px; border-radius:20px; border:1px solid var(--border2); background:transparent; color:var(--text2); cursor:pointer; transition:all .15s; }
+    .ex-chip:hover { border-color:var(--accent); color:var(--text1); background:rgba(79,142,247,.07); }
+
+    /* Privacy mode pills inside input bar */
+    .mode-pills { display:flex; gap:5px; padding:8px 14px 0; }
+    .mode-pill { font-size:11px; font-family:var(--mono); padding:3px 10px; border-radius:20px; border:1px solid var(--border2); background:transparent; color:var(--text3); cursor:pointer; transition:all .15s; display:flex; align-items:center; gap:4px; }
+    .mode-pill.active { border-color:var(--accent); color:var(--accent); background:rgba(79,142,247,.08); }
+
+    /* The main input box — Claude style */
+    .chat-box {
+      background:var(--bg2);
+      border:1px solid var(--border2);
+      border-radius:20px;
+      transition:border-color .2s, box-shadow .2s;
+      overflow:hidden;
+    }
+    .chat-box:focus-within {
+      border-color:var(--accent);
+      box-shadow:0 0 0 3px rgba(79,142,247,.12);
+    }
+    .chat-box-top { padding:12px 14px 0; }
+    .chat-textarea {
+      width:100%; min-height:48px; max-height:200px;
+      background:transparent; border:none; outline:none;
+      color:var(--text1); font-family:var(--mono); font-size:13px;
+      line-height:1.7; resize:none; overflow-y:auto;
+    }
+    .chat-textarea::placeholder { color:var(--text3); }
+    .chat-box-bottom {
+      display:flex; align-items:center; justify-content:space-between;
+      padding:8px 12px 10px;
+    }
+    .char-count { font-size:11px; font-family:var(--mono); color:var(--text3); }
+
+    /* THE SEND BUTTON — like Claude ↑ */
+    .send-btn {
+      width:36px; height:36px; border-radius:50%;
+      background:var(--accent); border:none;
+      display:flex; align-items:center; justify-content:center;
+      cursor:pointer; transition:background .2s, transform .1s;
+      flex-shrink:0;
+    }
+    .send-btn:hover { background:var(--accent2); }
+    .send-btn:active { transform:scale(.93); }
+    .send-btn:disabled { background:var(--border2); cursor:not-allowed; }
+    .send-btn svg { width:16px; height:16px; color:#fff; }
+    .spinner { width:14px; height:14px; border:2px solid rgba(255,255,255,.3); border-top-color:#fff; border-radius:50%; animation:spin .7s linear infinite; display:none; }
+    @keyframes spin { to { transform:rotate(360deg); } }
+    @keyframes fadeUp { from{opacity:0;transform:translateY(10px);}to{opacity:1;transform:translateY(0);} }
+
+    /* Toast */
+    .toast { position:fixed; bottom:2rem; right:2rem; z-index:999; padding:10px 16px; border-radius:8px; font-family:var(--mono); font-size:12px; transform:translateY(60px); opacity:0; transition:all .3s; pointer-events:none; }
+    .toast.show { transform:translateY(0); opacity:1; }
+    .toast.error { background:rgba(239,68,68,.15); border:1px solid rgba(239,68,68,.3); color:var(--red); }
+    .toast.success { background:rgba(34,197,94,.12); border:1px solid rgba(34,197,94,.3); color:var(--green); }
+
+    @media(max-width:640px){
+      .sidebar{display:none;}
+      .input-zone{padding:.5rem 1rem .75rem;}
+    }
+  </style>
+</head>
+<body>
+
+<!-- ══════════════════ AUTH SCREEN ══════════════════ -->
+<div id="auth-screen" class="screen active">
+  <div class="auth-card">
+    <div class="auth-logo">
+      <div class="shield"></div>
+      <div class="auth-brand">Prompti<span>fy</span></div>
+    </div>
+    <div class="auth-tabs">
+      <button class="auth-tab active" onclick="switchAuthTab('login')">Login</button>
+      <button class="auth-tab" onclick="switchAuthTab('register')">Register</button>
+    </div>
+    <form class="auth-form active" id="login-form" onsubmit="handleLogin(event)">
+      <div><div class="field-label">Email</div><input class="field-input" type="email" id="login-email" placeholder="you@example.com" required/></div>
+      <div><div class="field-label">Password</div><input class="field-input" type="password" id="login-pass" placeholder="••••••••" required/></div>
+      <div class="auth-msg" id="login-msg"></div>
+      <button class="btn-primary" type="submit">Login</button>
+    </form>
+    <form class="auth-form" id="register-form" onsubmit="handleRegister(event)">
+      <div><div class="field-label">Full Name</div><input class="field-input" type="text" id="reg-name" placeholder="Your name" required/></div>
+      <div><div class="field-label">Email</div><input class="field-input" type="email" id="reg-email" placeholder="you@example.com" required/></div>
+      <div><div class="field-label">Password</div><input class="field-input" type="password" id="reg-pass" placeholder="Min 6 characters" required minlength="6"/></div>
+      <div class="auth-msg" id="reg-msg"></div>
+      <button class="btn-primary" type="submit">Create Account</button>
+    </form>
+  </div>
+</div>
+
+<!-- ══════════════════ APP SCREEN ══════════════════ -->
+<div id="app-screen" class="screen">
+
+  <nav>
+    <div class="nav-left">
+      <div class="shield" style="width:26px;height:26px;"></div>
+      <div class="nav-brand">Prompti<span>fy</span></div>
+    </div>
+    <div class="nav-right">
+      <div class="nav-user">Logged in as <strong id="nav-username">—</strong></div>
+      <button class="btn-logout" onclick="handleLogout()">Logout</button>
+    </div>
+  </nav>
+
+  <div class="app-body">
+
+    <!-- SIDEBAR -->
+    <div class="sidebar">
+      <div class="sidebar-header">Prompt History</div>
+      <div class="sidebar-body" id="history-list">
+        <div class="hist-empty">No history yet.<br/>Send a prompt to begin.</div>
+      </div>
+      <div class="sidebar-footer">
+        <button class="btn-clear-hist" onclick="clearHistory()">Clear history</button>
+      </div>
+    </div>
+
+    <!-- MAIN -->
+    <div class="main-area">
+
+      <!-- SCROLL ZONE -->
+      <div class="scroll-zone" id="scroll-zone">
+
+        <!-- WELCOME (shown before first scan) -->
+        <div class="welcome" id="welcome">
+          <div class="welcome-icon">🛡</div>
+          <div class="welcome-title">Welcome to <span>Promptify</span></div>
+          <div class="welcome-sub">Type your AI prompt below and press ↑ to scan it. Promptify will detect and remove sensitive information before it reaches any AI system.</div>
+          <div class="detect-grid-wrap">
+            <div class="detect-grid-label">What we detect</div>
+            <div class="detect-grid">
+              <div class="detect-item"><div class="detect-icon">📧</div><div><div class="detect-name">Email address</div><div class="detect-example">abc@gmail.com</div></div></div>
+              <div class="detect-item"><div class="detect-icon">📱</div><div><div class="detect-name">Phone number</div><div class="detect-example">+92-321-7654321</div></div></div>
+              <div class="detect-item"><div class="detect-icon">🪪</div><div><div class="detect-name">CNIC</div><div class="detect-example">35202-1234567-1</div></div></div>
+              <div class="detect-item"><div class="detect-icon">💳</div><div><div class="detect-name">Card, CVC &amp; Expiry</div><div class="detect-example">4111 · CVV 123 · 09/27</div></div></div>
+              <div class="detect-item"><div class="detect-icon">👤</div><div><div class="detect-name">Person name</div><div class="detect-example">Dr. Tariq · I am Ayesha</div></div></div>
+              <div class="detect-item"><div class="detect-icon">🏥</div><div><div class="detect-name">Medical info</div><div class="detect-example">Type 2 Diabetes · Metformin</div></div></div>
+              <div class="detect-item"><div class="detect-icon">📍</div><div><div class="detect-name">Location</div><div class="detect-example">Lahore · Shaukat Khanum</div></div></div>
+              <div class="detect-item"><div class="detect-icon">🧠</div><div><div class="detect-name">Intent classification</div><div class="detect-example">Keeps public queries safe</div></div></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- SAFE BANNER -->
+        <div class="safe-banner" id="safe-banner">✓ &nbsp;No sensitive information detected — this prompt is safe to submit.</div>
+
+        <!-- RESULT CARD (hidden until scan) -->
+        <div class="result-card" id="result-card" style="display:none">
+          <div class="result-card-header">
+            <span class="result-card-title">🛡 Sanitized Prompt</span>
+            <button class="btn-new" onclick="resetToWelcome()">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              New prompt
+            </button>
+          </div>
+
+          <!-- Risk -->
+          <div class="risk-bar">
+            <div class="risk-icon" id="risk-icon">🛡</div>
+            <div>
+              <div class="risk-label" id="risk-label">—</div>
+              <div class="risk-sub" id="risk-sub">—</div>
+            </div>
+            <div class="risk-score" id="risk-score">—</div>
+          </div>
+
+          <!-- Chips -->
+          <div class="chips-row" id="chips-row"></div>
+
+          <!-- Intent note -->
+          <div class="intent-note" id="intent-note"></div>
+
+          <!-- Domain -->
+          <div class="domain-bar" id="domain-bar">
+            <div class="domain-bar-label">Email domain classification</div>
+            <div class="dpills" id="domain-pills"></div>
+          </div>
+
+          <!-- Output -->
+          <div class="output-section">
+            <div class="output-tabs-row">
+              <span class="output-tabs-label">✦ Sanitized Result</span>
+              <button class="output-tab active" id="tab-h" onclick="switchTab('highlighted')">Highlighted</button>
+              <button class="output-tab" id="tab-p" onclick="switchTab('plain')">Plain text</button>
+              <button class="btn-copy" id="copy-btn" onclick="copyOutput()">⎘ Copy</button>
+            </div>
+            <div class="output-highlighted" id="out-highlighted"></div>
+            <div class="output-plain" id="out-plain"></div>
+            <div class="output-legend">
+              <div class="leg-item"><div class="leg-dot" style="background:#7eb3ff"></div>Email</div>
+              <div class="leg-item"><div class="leg-dot" style="background:#f9a8d4"></div>Phone</div>
+              <div class="leg-item"><div class="leg-dot" style="background:#fbbf24"></div>CNIC</div>
+              <div class="leg-item"><div class="leg-dot" style="background:#fca5a5"></div>Card/CVC/Expiry</div>
+              <div class="leg-item"><div class="leg-dot" style="background:#4ade80"></div>Name</div>
+              <div class="leg-item"><div class="leg-dot" style="background:#fb7185"></div>Medical</div>
+              <div class="leg-item"><div class="leg-dot" style="background:#fde68a"></div>Location</div>
+              <div class="leg-item"><div class="leg-dot" style="background:#fbbf24;border:1px dashed #fbbf24"></div>Query (kept)</div>
+            </div>
+          </div>
+
+          <!-- Stats -->
+          <div class="stats-row" id="stats-row"></div>
+
+          <!-- Send to AI -->
+          <div class="ai-row">
+            <span class="ai-label">⚠ Only the sanitized version (PII removed) will be sent</span>
+            <button class="btn-ai gpt" onclick="sendToAI()">↗ Copy &amp; Open ChatGPT</button>
+            <button class="btn-ai cpy" onclick="copyPlain()">⎘ Copy clean prompt</button>
+          </div>
+        </div>
+
+      </div><!-- /scroll-zone -->
+
+      <!-- ══ INPUT ZONE ══ -->
+      <div class="input-zone">
+
+        <!-- Example chips -->
+        <div class="example-chips">
+          <button class="ex-chip" onclick="loadEx(0)">email</button>
+          <button class="ex-chip" onclick="loadEx(1)">phone</button>
+          <button class="ex-chip" onclick="loadEx(2)">CNIC</button>
+          <button class="ex-chip" onclick="loadEx(3)">card + CVC</button>
+          <button class="ex-chip" onclick="loadEx(4)">medical</button>
+          <button class="ex-chip" onclick="loadEx(5)">mixed</button>
+          <button class="ex-chip" onclick="loadEx(6)">query</button>
+          <button class="ex-chip" onclick="loadEx(7)">safe</button>
+        </div>
+
+        <!-- Chat box -->
+        <div class="chat-box">
+          <!-- Privacy mode pills inside box -->
+          <div class="mode-pills">
+            <button class="mode-pill active" id="mode-strict" onclick="setMode('strict')">🔒 Strict</button>
+            <button class="mode-pill" id="mode-standard" onclick="setMode('standard')">🛡 Standard</button>
+            <button class="mode-pill" id="mode-minimal" onclick="setMode('minimal')">👁 Minimal</button>
+          </div>
+          <div class="chat-box-top">
+            <textarea
+              class="chat-textarea"
+              id="prompt"
+              placeholder="Type your AI prompt here and press ↑ to scan…"
+              oninput="onInput()"
+              onkeydown="onKey(event)"
+              rows="2"
+            ></textarea>
+          </div>
+          <div class="chat-box-bottom">
+            <span class="char-count" id="char-count">0 characters</span>
+            <button class="send-btn" id="send-btn" onclick="scanPrompt()" title="Scan & Sanitize (Enter)">
+              <svg id="send-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/>
+              </svg>
+              <div class="spinner" id="spinner"></div>
+            </button>
+          </div>
+        </div>
+
+      </div><!-- /input-zone -->
+    </div><!-- /main-area -->
+  </div><!-- /app-body -->
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ══════════════════════════════════════════════════════════
+//  STORAGE
+// ══════════════════════════════════════════════════════════
+function getUsers()    { try{return JSON.parse(localStorage.getItem('pfy_users')||'{}')}catch{return{}} }
+function saveUsers(u)  { localStorage.setItem('pfy_users', JSON.stringify(u)); }
+function getSession()  { try{return JSON.parse(localStorage.getItem('pfy_session')||'null')}catch{return null} }
+function saveSession(s){ localStorage.setItem('pfy_session', JSON.stringify(s)); }
+function clearSession(){ localStorage.removeItem('pfy_session'); }
+function getHistory()  { try{return JSON.parse(localStorage.getItem('pfy_hist_'+(getSession()?.email||''))||'[]')}catch{return[]} }
+function saveHistory(h){ localStorage.setItem('pfy_hist_'+(getSession()?.email||''), JSON.stringify(h)); }
+
+// ══════════════════════════════════════════════════════════
+//  AUTH
+// ══════════════════════════════════════════════════════════
+function switchAuthTab(tab) {
+  document.querySelectorAll('.auth-tab').forEach((t,i)=>t.classList.toggle('active',(i===0&&tab==='login')||(i===1&&tab==='register')));
+  document.getElementById('login-form').classList.toggle('active', tab==='login');
+  document.getElementById('register-form').classList.toggle('active', tab==='register');
+}
+function handleLogin(e) {
+  e.preventDefault();
+  const email=document.getElementById('login-email').value.trim();
+  const pass=document.getElementById('login-pass').value;
+  const users=getUsers(); const msg=document.getElementById('login-msg');
+  msg.className='auth-msg';
+  if (!users[email]){msg.className='auth-msg error';msg.textContent='No account found. Please register.';return;}
+  if (users[email].password!==btoa(pass)){msg.className='auth-msg error';msg.textContent='Incorrect password.';return;}
+  saveSession({email, name:users[email].name});
+  loadApp();
+}
+function handleRegister(e) {
+  e.preventDefault();
+  const name=document.getElementById('reg-name').value.trim();
+  const email=document.getElementById('reg-email').value.trim();
+  const pass=document.getElementById('reg-pass').value;
+  const users=getUsers(); const msg=document.getElementById('reg-msg');
+  msg.className='auth-msg';
+  if (users[email]){msg.className='auth-msg error';msg.textContent='Account already exists.';return;}
+  users[email]={name, password:btoa(pass)};
+  saveUsers(users);
+  msg.className='auth-msg success';msg.textContent='Account created! You can now log in.';
+  setTimeout(()=>switchAuthTab('login'), 1200);
+}
+function handleLogout() {
+  clearSession();
+  document.getElementById('auth-screen').classList.add('active');
+  document.getElementById('app-screen').classList.remove('active');
+  resetToWelcome();
+}
+function loadApp() {
+  const s=getSession(); if(!s) return;
+  document.getElementById('auth-screen').classList.remove('active');
+  document.getElementById('app-screen').classList.add('active');
+  document.getElementById('nav-username').textContent=s.name;
+  renderHistory();
+  document.getElementById('prompt').focus();
+}
+window.addEventListener('DOMContentLoaded',()=>{ if(getSession()) loadApp(); });
+
+// ══════════════════════════════════════════════════════════
+//  HISTORY
+// ══════════════════════════════════════════════════════════
+function renderHistory() {
+  const hist=getHistory();
+  const el=document.getElementById('history-list');
+  if (!hist.length){el.innerHTML='<div class="hist-empty">No history yet.<br/>Send a prompt to begin.</div>';return;}
+  el.innerHTML=hist.slice(0,30).map((h,i)=>`
+    <div class="hist-item" onclick="loadHist(${i})">
+      <div class="hist-text">${escHtml(h.prompt.slice(0,55))}${h.prompt.length>55?'…':''}</div>
+      <div class="hist-meta">
+        <span class="hist-badge ${h.risk}">${h.risk}</span>
+        <span class="hist-time">${h.time}</span>
+      </div>
+    </div>`).join('');
+}
+function loadHist(i) {
+  const h=getHistory()[i]; if(!h) return;
+  document.getElementById('prompt').value=h.prompt;
+  onInput();
+  scanPrompt();
+}
+function clearHistory() { saveHistory([]); renderHistory(); showToast('History cleared','success'); }
+function addToHistory(prompt, risk) {
+  const hist=getHistory();
+  hist.unshift({prompt, risk, time:new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})});
+  saveHistory(hist.slice(0,50));
+  renderHistory();
+}
+
+// ══════════════════════════════════════════════════════════
+//  PRIVACY MODE
+// ══════════════════════════════════════════════════════════
+let privacyMode = 'strict';
+function setMode(m) {
+  privacyMode = m;
+  ['strict','standard','minimal'].forEach(x=>document.getElementById('mode-'+x).classList.toggle('active',x===m));
+}
+
+// ══════════════════════════════════════════════════════════
+//  DETECTION PATTERNS
+// ══════════════════════════════════════════════════════════
+const PATTERNS = {
+  email:       /\b[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}\b/g,
+  phone:       /(\+92|0092)[\s\-]?(3[0-9]{2})[\s\-]?[0-9]{3}[\s\-]?[0-9]{4}|(?<![0-9])(0)(3[0-9]{2})[\s\-]?[0-9]{7}(?![0-9])/g,
+  cnic:        /\b[0-9]{5}[\-][0-9]{7,8}[\-][0-9]\b|\b[0-9]{13}\b/g,
+  credit_card: /\b([0-9]{4}[\s\-]){3}[0-9]{4}\b|\b4[0-9]{12}(?:[0-9]{3})?\b|\b5[1-5][0-9]{14}\b|\b3[47][0-9]{13}\b/g,
+  card_cvc:    /\b(?:cvc|cvv|cv2|security\s*code|card\s*verif\w*)[:\s]*\d{3,4}\b/gi,
+  card_expiry: /\b(?:exp(?:ir[ya]?\w*)?|valid\s*(?:thru?|until|till|through))[:\s]*(0[1-9]|1[0-2])[\/\-]([0-9]{2,4})\b|\b(0[1-9]|1[0-2])\/(2[0-9])\b/gi,
+  // ── PERSON NAME — detects titles + self-intro + "Name:" label ──
+  // Catches: "Dr. Tariq", "I am Ayesha Khan", "my name is Sara",
+  //          "Name: Hanzallah Abbas", "This is Wajeeh Ullah"
+  person_name: /\b(?:Dr|Mr|Mrs|Ms|Miss|Prof|Engr|Adv|Sir|Madam)\.?\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,3}\b|(?:I\s+am|I'm|[Mm]y\s+name\s+is|[Nn]ame\s*:\s*|[Tt]his\s+is\s+)\s*([A-Z][a-z]{1,20}\s+[A-Z][a-z]{1,20}(?:\s+[A-Z][a-z]{1,20})?)/g,
+  medical:     /\b\d+\s*(?:mg|mcg|ml|g|units?)\s+[A-Za-z]+\b|\b(?:type\s+[12]\s+)?(?:diabetes|cancer|hiv|aids|hepatitis|tuberculosis|tb|hypertension|depression|anxiety|asthma|epilepsy|alzheimer|parkinson|schizophrenia|bipolar|arthritis|tumor|covid[\-\s]?19?|coronavirus|cholesterol|stroke|migraine)\b|\b(?:metformin|insulin|aspirin|paracetamol|ibuprofen|amoxicillin|ciprofloxacin|omeprazole|lisinopril|atorvastatin|metoprolol|amlodipine|warfarin|prednisone|prednisolone|dexamethasone|clopidogrel|losartan|pantoprazole|cetirizine|loratadine|diazepam|alprazolam|sertraline|fluoxetine|azithromycin)\b/gi,
+  location:    /\b(?:Karachi|Lahore|Islamabad|Rawalpindi|Faisalabad|Multan|Peshawar|Quetta|Sialkot|Gujranwala|Hyderabad|Abbottabad|Murree|Bahawalpur|Sargodha)\b|(?:at|in|from)\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\s+(?:Hospital|Clinic|Medical\s+Center|Centre|Institute|University|College|School)\b/g,
+};
+const MASKS   = { email:'[EMAIL]', phone:'[PHONE]', cnic:'[CNIC]', credit_card:'[CARD]', card_cvc:'[CVC]', card_expiry:'[EXPIRY]', person_name:'[NAME]', medical:'[MEDICAL-INFO]', location:'[LOCATION]' };
+const WEIGHTS = { email:20, phone:25, cnic:40, credit_card:50, card_cvc:45, card_expiry:30, person_name:30, medical:35, location:15 };
+const COLORS  = { email:'#7eb3ff', phone:'#f9a8d4', cnic:'#fbbf24', credit_card:'#fca5a5', card_cvc:'#fca5a5', card_expiry:'#fca5a5', person_name:'#4ade80', medical:'#fb7185', location:'#fde68a' };
+const TLABELS = { email:'Email', phone:'Phone', cnic:'CNIC', credit_card:'Card number', card_cvc:'Card CVC', card_expiry:'Card expiry', person_name:'Person name', medical:'Medical info', location:'Location' };
+const ALWAYS_MASK = new Set(['cnic','credit_card','card_cvc','card_expiry','person_name','medical','location']);
+
+// ══════════════════════════════════════════════════════════
+//  INTENT SIGNALS
+// ══════════════════════════════════════════════════════════
+const POSSESSION = ['my ','mine','i am',"i'm",'contact me','reach me','call me','email me','my phone','my email','my cnic','my card','my number','my name is','i have','i use','send to me','my identity','i was diagnosed','my doctor','my condition','my medication','i am taking','i take'];
+const QUERY_SIG  = ['what ','which ','is this','is that','belongs to','identify','what country','phone code','country code','what network','check this','verify','confirm','official','for hec','look up','what does','explain','is it valid','is this correct','does this','does that','who owns','can you tell'];
+const PUBLIC_TLD = ['.gov','.gov.pk','.mil','.edu','.edu.pk','.ac.pk','.ac.uk','.edu.au'];
+
+function classifyIntent(text, finding) {
+  const {type, value, start, end} = finding;
+  if (ALWAYS_MASK.has(type)) return {action:'mask', reason:`${TLABELS[type]||type} is always masked.`};
+  const ctxB = text.slice(0,start).toLowerCase().split(' ').slice(-8).join(' ');
+  const ctxA = text.slice(end).toLowerCase().split(' ').slice(0,8).join(' ');
+  const full  = ctxB + ' ' + ctxA;
+  const p = POSSESSION.some(s=>ctxB.includes(s));
+  const q = QUERY_SIG.some(s=>full.includes(s));
+  if (type==='email' && !p) {
+    const dom = value.split('@')[1]?.toLowerCase()||'';
+    if (PUBLIC_TLD.some(t=>dom.endsWith(t))) return {action:'warn', reason:'Public/institutional domain — likely a public reference.'};
+  }
+  if (p && !q) return {action:'mask',  reason:'Possession signal found — treating as personal data.'};
+  if (q && !p) return {action:'warn',  reason:'Query signal found — user is asking, not sharing.'};
+  if (p &&  q) return {action:'ask',   reason:'Mixed signals — please review.'};
+  return           {action:'ask',      reason:'No clear context — please review.'};
+}
+
+function classifyDomain(email) {
+  const dom = email.split('@')[1]?.toLowerCase()||'';
+  if (['.gov','.gov.pk','.mil','.edu.pk','.ac.pk'].some(t=>dom.endsWith(t))) return 'government';
+  if (['.edu','.ac.uk','.edu.au','.ac.nz'].some(t=>dom.endsWith(t))) return 'educational';
+  if (['gmail.com','yahoo.com','hotmail.com','outlook.com','live.com'].includes(dom)) return 'personal';
+  return 'corporate';
+}
+
+// ══════════════════════════════════════════════════════════
+//  EXAMPLES
+// ══════════════════════════════════════════════════════════
+const EXAMPLES = [
+  "Please summarize this. My email is john.doe@gmail.com and send the report there.",
+  "Call me at +92-321-7654321 or 03224681016 to discuss the project.",
+  "My CNIC is 78238-82382339-9 and I need help with this form.",
+  "My card is 4111 1111 1111 1111, CVV 456, expiry 09/27. Help me understand this charge.",
+  "Hi, I am Ayesha Khan (Phone: +92-321-7654321). My physician Dr. Tariq Mahmood at Shaukat Khanum Hospital in Lahore diagnosed me with Type 2 Diabetes and prescribed 500mg Metformin.",
+  "Hi, I am Sara Ahmed. Email: sara@company.pk, CNIC: 42101-9876543-2, phone 0312-3456789, card 5500 0000 0000 0004 CVV 123 exp 12/26.",
+  "Is this the official email for HEC? finance@hec.gov.pk — what country code is +92-300?",
+  "Explain the difference between supervised and unsupervised machine learning.",
+];
+
+// ══════════════════════════════════════════════════════════
+//  CORE DETECTION
+// ══════════════════════════════════════════════════════════
+function detectAll(text) {
+  const findings = [];
+  for (const [type, pattern] of Object.entries(PATTERNS)) {
+    pattern.lastIndex = 0;
+    let m;
+    while ((m = pattern.exec(text)) !== null) {
+      const val = m[0].trim();
+      if (val) findings.push({type, value:val, start:m.index, end:m.index+m[0].length});
+    }
+  }
+  findings.sort((a,b)=>a.start-b.start);
+  const deduped=[]; let lastEnd=-1;
+  for (const f of findings) { if(f.start>=lastEnd){deduped.push(f);lastEnd=f.end;} }
+  return deduped;
+}
+
+function processPrompt(text) {
+  const findings = detectAll(text);
+  const enhanced = findings.map(f => {
+    let ir;
+    if (privacyMode==='strict')  { ir={action:'mask', reason:'Strict mode — everything masked.'}; }
+    else if (privacyMode==='minimal') {
+      const hi = new Set(['cnic','credit_card','card_cvc','card_expiry','person_name','medical']);
+      ir = hi.has(f.type) ? {action:'mask',reason:'High-risk — masked in all modes.'} : {action:'ask',reason:'Minimal mode — low-risk item flagged.'};
+    } else {
+      ir = classifyIntent(text, f);
+    }
+    return {...f, ir};
+  });
+
+  let score=0; const summary={};
+  let maskCount=0, warnCount=0, askCount=0;
+  for (const f of enhanced) {
+    summary[f.type]=(summary[f.type]||0)+1;
+    if (f.ir.action==='mask')  { score+=WEIGHTS[f.type]||15; maskCount++; }
+    else if (f.ir.action==='warn') warnCount++;
+    else { score+=Math.floor((WEIGHTS[f.type]||15)/2); askCount++; }
+  }
+  score=Math.min(score,100);
+  const risk=score===0?'low':score<40?'medium':'high';
+
+  // Build highlighted HTML
+  let hl='', cursor=0;
+  for (const f of enhanced) {
+    hl += escHtml(text.slice(cursor, f.start));
+    const lbl=MASKS[f.type]||'[REDACTED]';
+    if (f.ir.action==='mask')
+      hl += `<span class="pii-tag ${f.type}" title="${escAttr(f.ir.reason)}">${lbl}</span>`;
+    else if (f.ir.action==='warn')
+      hl += `<span class="pii-tag warn" title="Not masked — ${escAttr(f.ir.reason)}">${escHtml(f.value)}</span>`;
+    else
+      hl += `<span class="pii-tag ask" title="Review needed — ${escAttr(f.ir.reason)}">${escHtml(f.value)}</span>`;
+    cursor=f.end;
+  }
+  hl += escHtml(text.slice(cursor));
+
+  // Build plain sanitized text
+  let sanitized=text;
+  for (const f of [...enhanced].reverse()) {
+    if (f.ir.action==='mask') sanitized=sanitized.slice(0,f.start)+(MASKS[f.type]||'[REDACTED]')+sanitized.slice(f.end);
+  }
+
+  const domainInfo = enhanced.filter(f=>f.type==='email').map(f=>({email:f.value, domain:classifyDomain(f.value)}));
+  return {enhanced, summary, score, risk, hl, sanitized, domainInfo, maskCount, warnCount, askCount};
+}
+
+// ══════════════════════════════════════════════════════════
+//  MAIN SCAN
+// ══════════════════════════════════════════════════════════
+let lastSanitized=''; let activeTab='highlighted';
+
+async function scanPrompt() {
+  const text = document.getElementById('prompt').value.trim();
+  if (!text) return;
+
+  // Spinner on
+  const btn=document.getElementById('send-btn');
+  document.getElementById('send-icon').style.display='none';
+  document.getElementById('spinner').style.display='block';
+  btn.disabled=true;
+
+  await new Promise(r=>setTimeout(r,400));
+
+  const result = processPrompt(text);
+  lastSanitized = result.sanitized;
+  addToHistory(text, result.risk);
+  renderResult(result);
+
+  // Spinner off
+  document.getElementById('send-icon').style.display='';
+  document.getElementById('spinner').style.display='none';
+  btn.disabled=false;
+}
+
+// ══════════════════════════════════════════════════════════
+//  RENDER
+// ══════════════════════════════════════════════════════════
+function renderResult(r) {
+  const {enhanced, summary, score, risk, hl, sanitized, domainInfo, maskCount, warnCount, askCount} = r;
+
+  document.getElementById('welcome').style.display='none';
+
+  if (enhanced.length===0) {
+    document.getElementById('result-card').style.display='none';
+    document.getElementById('safe-banner').classList.add('visible');
+    return;
+  }
+
+  document.getElementById('safe-banner').classList.remove('visible');
+  document.getElementById('result-card').style.display='block';
+
+  // Risk
+  const icons={low:'🛡',medium:'⚠️',high:'🚨'};
+  const labels={low:'Low risk',medium:'Medium risk',high:'High risk'};
+  const subs={
+    low:    maskCount>0?`${maskCount} item(s) masked`:'Nothing masked',
+    medium: `${maskCount} masked · ${warnCount} query · ${askCount} to review`,
+    high:   `Critical PII — ${maskCount} item(s) masked`
+  };
+  document.getElementById('risk-icon').className=`risk-icon ${risk}`;
+  document.getElementById('risk-icon').textContent=icons[risk];
+  document.getElementById('risk-label').textContent=labels[risk];
+  document.getElementById('risk-sub').textContent=subs[risk];
+  document.getElementById('risk-score').className=`risk-score ${risk}`;
+  document.getElementById('risk-score').textContent=score+' / 100';
+
+  // Chips
+  document.getElementById('chips-row').innerHTML=Object.entries(summary).map(([t,c])=>`
+    <div class="chip">
+      <div class="chip-dot" style="background:${COLORS[t]||'#888'}"></div>
+      <span class="chip-label">${TLABELS[t]||t}</span>
+      <span class="chip-count">×${c}</span>
+    </div>`).join('');
+
+  // Intent note
+  const note=document.getElementById('intent-note');
+  if (warnCount>0||askCount>0) {
+    note.classList.add('visible');
+    note.textContent=`⚠ ${warnCount} item(s) kept unchanged (queries). ${askCount>0?askCount+' item(s) need your review — hover the dashed text.':''}`;
+  } else note.classList.remove('visible');
+
+  // Domain
+  if (domainInfo.length) {
+    document.getElementById('domain-bar').classList.add('visible');
+    document.getElementById('domain-pills').innerHTML=domainInfo.map(d=>`<span class="dpill ${d.domain}">${escHtml(d.email)} → ${d.domain}</span>`).join('');
+  } else document.getElementById('domain-bar').classList.remove('visible');
+
+  // Output
+  document.getElementById('out-highlighted').innerHTML=hl;
+  document.getElementById('out-plain').textContent=sanitized;
+  switchTab('highlighted');
+
+  // Stats
+  document.getElementById('stats-row').innerHTML=[
+    {n:enhanced.length, l:'Detections'},
+    {n:maskCount,        l:'Masked'},
+    {n:warnCount,        l:'Queries kept'},
+    {n:askCount,         l:'Need review'},
+    {n:score+'/100',     l:'Risk score'},
+    {n:privacyMode,      l:'Mode'},
+  ].map(s=>`<div class="stat-box"><div class="stat-num">${s.n}</div><div class="stat-lbl">${s.l}</div></div>`).join('');
+
+  // Scroll to result
+  document.getElementById('result-card').scrollIntoView({behavior:'smooth', block:'start'});
+}
+
+// ══════════════════════════════════════════════════════════
+//  UI HELPERS
+// ══════════════════════════════════════════════════════════
+function switchTab(tab) {
+  activeTab=tab;
+  document.getElementById('out-highlighted').style.display=tab==='highlighted'?'block':'none';
+  document.getElementById('out-plain').style.display=tab==='plain'?'block':'none';
+  document.getElementById('tab-h').classList.toggle('active',tab==='highlighted');
+  document.getElementById('tab-p').classList.toggle('active',tab==='plain');
+}
+
+function copyOutput() {
+  const el=activeTab==='plain'?document.getElementById('out-plain'):document.getElementById('out-highlighted');
+  navigator.clipboard.writeText(el.innerText||el.textContent).then(()=>{
+    const btn=document.getElementById('copy-btn');
+    btn.textContent='✓ Copied';
+    setTimeout(()=>btn.innerHTML='⎘ Copy', 1800);
+  }).catch(()=>showToast('Could not copy','error'));
+}
+
+function copyPlain() {
+  if (!lastSanitized){showToast('Scan a prompt first','error');return;}
+  navigator.clipboard.writeText(lastSanitized).then(()=>showToast('Clean prompt copied','success'));
+}
+
+function sendToAI() {
+  if (!lastSanitized){showToast('Scan a prompt first','error');return;}
+  // ChatGPT does not support ?q= URL parameter — copy first, then open
+  navigator.clipboard.writeText(lastSanitized).then(()=>{
+    showToast('Sanitized prompt copied! Paste it in ChatGPT ↗','success');
+    setTimeout(()=>window.open('https://chatgpt.com','_blank'), 600);
+  }).catch(()=>{
+    // Fallback if clipboard blocked
+    window.open('https://chatgpt.com','_blank');
+    showToast('ChatGPT opened — manually paste your sanitized prompt','success');
+  });
+}
+
+function resetToWelcome() {
+  document.getElementById('result-card').style.display='none';
+  document.getElementById('safe-banner').classList.remove('visible');
+  document.getElementById('welcome').style.display='';
+  document.getElementById('prompt').value='';
+  onInput();
+  document.getElementById('prompt').focus();
+  lastSanitized='';
+}
+
+function loadEx(i) { document.getElementById('prompt').value=EXAMPLES[i]; onInput(); }
+
+function onInput() {
+  const ta=document.getElementById('prompt');
+  document.getElementById('char-count').textContent=ta.value.length+' characters';
+  // Auto-resize
+  ta.style.height='auto';
+  ta.style.height=Math.min(ta.scrollHeight, 200)+'px';
+}
+
+function onKey(e) {
+  // Send on Enter (not Shift+Enter)
+  if (e.key==='Enter' && !e.shiftKey) { e.preventDefault(); scanPrompt(); }
+}
+
+function showToast(msg, type='error') {
+  const t=document.getElementById('toast');
+  t.textContent=msg; t.className='toast '+type;
+  setTimeout(()=>t.classList.add('show'),10);
+  setTimeout(()=>t.classList.remove('show'),3000);
+}
+
+function escHtml(s){ return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function escAttr(s){ return s.replace(/"/g,'&quot;'); }
+</script>
+</body>
+</html>
