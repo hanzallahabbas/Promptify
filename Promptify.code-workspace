@@ -1,0 +1,16 @@
+{
+  "folders": [
+    {
+      "name": "Promptify Project",
+      "path": "."
+    },
+    {
+      "name": "📂 DB Schemas (Models)",
+      "path": "models"
+    }
+  ],
+  "settings": {
+    "explorer.decorations.colors": true,
+    "explorer.decorations.badges": true
+  }
+}

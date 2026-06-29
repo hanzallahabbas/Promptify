@@ -476,92 +476,175 @@
 
 <script>
 // ══════════════════════════════════════════════════════════
-//  STORAGE
+//  CONFIG + TOKEN HELPERS
 // ══════════════════════════════════════════════════════════
-function getUsers()    { try{return JSON.parse(localStorage.getItem('pfy_users')||'{}')}catch{return{}} }
-function saveUsers(u)  { localStorage.setItem('pfy_users', JSON.stringify(u)); }
-function getSession()  { try{return JSON.parse(localStorage.getItem('pfy_session')||'null')}catch{return null} }
-function saveSession(s){ localStorage.setItem('pfy_session', JSON.stringify(s)); }
-function clearSession(){ localStorage.removeItem('pfy_session'); }
-function getHistory()  { try{return JSON.parse(localStorage.getItem('pfy_hist_'+(getSession()?.email||''))||'[]')}catch{return[]} }
-function saveHistory(h){ localStorage.setItem('pfy_hist_'+(getSession()?.email||''), JSON.stringify(h)); }
+const API = 'http://localhost:5000';
+
+function getToken()  { return localStorage.getItem('pfy_token'); }
+function saveToken(t){ localStorage.setItem('pfy_token', t); }
+function clearToken(){ localStorage.removeItem('pfy_token'); }
+function getUser()   { try{return JSON.parse(localStorage.getItem('pfy_user')||'null')}catch{return null} }
+function saveUser(u) { localStorage.setItem('pfy_user', JSON.stringify(u)); }
+function clearUser() { localStorage.removeItem('pfy_user'); }
+
+function authHeaders() {
+  return { 'Content-Type':'application/json', 'Authorization':'Bearer '+getToken() };
+}
 
 // ══════════════════════════════════════════════════════════
-//  AUTH
+//  AUTH — calls real Flask API
 // ══════════════════════════════════════════════════════════
 function switchAuthTab(tab) {
   document.querySelectorAll('.auth-tab').forEach((t,i)=>t.classList.toggle('active',(i===0&&tab==='login')||(i===1&&tab==='register')));
   document.getElementById('login-form').classList.toggle('active', tab==='login');
   document.getElementById('register-form').classList.toggle('active', tab==='register');
 }
-function handleLogin(e) {
+
+async function handleLogin(e) {
   e.preventDefault();
-  const email=document.getElementById('login-email').value.trim();
-  const pass=document.getElementById('login-pass').value;
-  const users=getUsers(); const msg=document.getElementById('login-msg');
-  msg.className='auth-msg';
-  if (!users[email]){msg.className='auth-msg error';msg.textContent='No account found. Please register.';return;}
-  if (users[email].password!==btoa(pass)){msg.className='auth-msg error';msg.textContent='Incorrect password.';return;}
-  saveSession({email, name:users[email].name});
-  loadApp();
+  const email = document.getElementById('login-email').value.trim();
+  const pass  = document.getElementById('login-pass').value;
+  const msg   = document.getElementById('login-msg');
+  msg.className = 'auth-msg';
+  try {
+    const res  = await fetch(`${API}/login`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({email, password:pass})});
+    const data = await res.json();
+    if (!res.ok) { msg.className='auth-msg error'; msg.textContent=data.error; return; }
+    saveToken(data.token); saveUser({email:data.email, name:data.name});
+    loadApp();
+  } catch {
+    msg.className='auth-msg error'; msg.textContent='Cannot connect to Flask server. Run: python app.py';
+  }
 }
-function handleRegister(e) {
+
+async function handleRegister(e) {
   e.preventDefault();
-  const name=document.getElementById('reg-name').value.trim();
-  const email=document.getElementById('reg-email').value.trim();
-  const pass=document.getElementById('reg-pass').value;
-  const users=getUsers(); const msg=document.getElementById('reg-msg');
-  msg.className='auth-msg';
-  if (users[email]){msg.className='auth-msg error';msg.textContent='Account already exists.';return;}
-  users[email]={name, password:btoa(pass)};
-  saveUsers(users);
-  msg.className='auth-msg success';msg.textContent='Account created! You can now log in.';
-  setTimeout(()=>switchAuthTab('login'), 1200);
+  const name  = document.getElementById('reg-name').value.trim();
+  const email = document.getElementById('reg-email').value.trim();
+  const pass  = document.getElementById('reg-pass').value;
+  const msg   = document.getElementById('reg-msg');
+  msg.className = 'auth-msg';
+  try {
+    const res  = await fetch(`${API}/register`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name, email, password:pass})});
+    const data = await res.json();
+    if (!res.ok) { msg.className='auth-msg error'; msg.textContent=data.error; return; }
+    saveToken(data.token); saveUser({email:data.email, name:data.name});
+    loadApp();
+  } catch {
+    msg.className='auth-msg error'; msg.textContent='Cannot connect to Flask server. Run: python app.py';
+  }
 }
+
 function handleLogout() {
-  clearSession();
+  clearToken(); clearUser();
   document.getElementById('auth-screen').classList.add('active');
   document.getElementById('app-screen').classList.remove('active');
   resetToWelcome();
 }
+
 function loadApp() {
-  const s=getSession(); if(!s) return;
+  const user = getUser();
+  if (!user || !getToken()) return;
   document.getElementById('auth-screen').classList.remove('active');
   document.getElementById('app-screen').classList.add('active');
-  document.getElementById('nav-username').textContent=s.name;
+  document.getElementById('nav-username').textContent = user.name;
   renderHistory();
   document.getElementById('prompt').focus();
 }
-window.addEventListener('DOMContentLoaded',()=>{ if(getSession()) loadApp(); });
+
+window.addEventListener('DOMContentLoaded', () => { if(getToken() && getUser()) loadApp(); });
 
 // ══════════════════════════════════════════════════════════
-//  HISTORY
+//  HISTORY — loads from MongoDB via API
 // ══════════════════════════════════════════════════════════
 function renderHistory() {
-  const hist=getHistory();
-  const el=document.getElementById('history-list');
-  if (!hist.length){el.innerHTML='<div class="hist-empty">No history yet.<br/>Send a prompt to begin.</div>';return;}
-  el.innerHTML=hist.slice(0,30).map((h,i)=>`
-    <div class="hist-item" onclick="loadHist(${i})">
-      <div class="hist-text">${escHtml(h.prompt.slice(0,55))}${h.prompt.length>55?'…':''}</div>
-      <div class="hist-meta">
-        <span class="hist-badge ${h.risk}">${h.risk}</span>
-        <span class="hist-time">${h.time}</span>
-      </div>
-    </div>`).join('');
+  fetch(`${API}/history`, {headers: authHeaders()})
+    .then(r => r.ok ? r.json() : {history:[]})
+    .then(data => {
+      const hist = data.history || [];
+      const el   = document.getElementById('history-list');
+      if (!hist.length) { el.innerHTML='<div class="hist-empty">No history yet.<br/>Send a prompt to begin.</div>'; return; }
+      el.innerHTML = hist.slice(0,30).map(h => `
+        <div class="hist-item" onclick="loadHistPrompt(decodeURIComponent('${encodeURIComponent(h.original||'')}'))">
+          <div class="hist-text">${escHtml((h.original||'').slice(0,55))}${(h.original||'').length>55?'…':''}</div>
+          <div class="hist-meta">
+            <span class="hist-badge ${h.risk_level||'low'}">${h.risk_level||'low'}</span>
+            <span class="hist-time">${h.timestamp ? new Date(h.timestamp).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}) : ''}</span>
+          </div>
+        </div>`).join('');
+    }).catch(()=>{});
 }
-function loadHist(i) {
-  const h=getHistory()[i]; if(!h) return;
-  document.getElementById('prompt').value=h.prompt;
-  onInput();
-  scanPrompt();
+
+function loadHistPrompt(p) {
+  document.getElementById('prompt').value = p;
+  onInput(); scanPrompt();
 }
-function clearHistory() { saveHistory([]); renderHistory(); showToast('History cleared','success'); }
-function addToHistory(prompt, risk) {
-  const hist=getHistory();
-  hist.unshift({prompt, risk, time:new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})});
-  saveHistory(hist.slice(0,50));
-  renderHistory();
+
+async function clearHistory() {
+  try {
+    await fetch(`${API}/history`, {method:'DELETE', headers: authHeaders()});
+    renderHistory(); showToast('History cleared','success');
+  } catch { showToast('Could not clear history','error'); }
+}
+
+// ══════════════════════════════════════════════════════════
+//  API BRIDGE — calls Flask backend
+// ══════════════════════════════════════════════════════════
+async function callAPI(text) {
+  try {
+    const res  = await fetch(`${API}/check_prompt`, {
+      method:  'POST',
+      headers: authHeaders(),
+      body:    JSON.stringify({ prompt: text, mode: privacyMode })
+    });
+
+    if (res.status === 401) {
+      showToast('Session expired — please log in again', 'error');
+      handleLogout(); return null;
+    }
+
+    const data = await res.json();
+    if (!res.ok) { showToast(data.error || 'Server error', 'error'); return null; }
+
+    // Map Flask response to the format renderResult expects
+    return {
+      enhanced:    data.findings?.map(f => ({...f, ir:{action:f.action, reason:f.reason}})) || [],
+      summary:     data.detected || {},
+      score:       data.risk_score || 0,
+      risk:        data.risk_level || 'low',
+      hl:          buildHighlighted(text, data.findings || []),
+      sanitized:   data.safe_prompt || text,
+      domainInfo:  Object.entries(data.domain_classifications || {}).map(([email,domain])=>({email,domain})),
+      maskCount:   data.mask_count || 0,
+      warnCount:   data.warn_count || 0,
+      askCount:    data.ask_count  || 0,
+    };
+  } catch {
+    showToast('Cannot reach Flask server — is python app.py running?', 'error');
+    return null;
+  }
+}
+
+// Build highlighted HTML from Flask findings
+function buildHighlighted(text, findings) {
+  const MASKS = {email:'[EMAIL]',phone:'[PHONE]',cnic:'[CNIC]',credit_card:'[CARD]',
+    card_cvc:'[CVC]',card_expiry:'[EXPIRY]',person_name:'[NAME]',
+    medical:'[MEDICAL-INFO]',location:'[LOCATION]'};
+  let hl = '', cursor = 0;
+  const sorted = [...findings].sort((a,b)=>a.start-b.start);
+  for (const f of sorted) {
+    hl += escHtml(text.slice(cursor, f.start));
+    const lbl = MASKS[f.type] || '[REDACTED]';
+    if (f.action === 'mask')
+      hl += `<span class="pii-tag ${f.type}" title="${escAttr(f.reason)}">${lbl}</span>`;
+    else if (f.action === 'warn')
+      hl += `<span class="pii-tag warn" title="Not masked — ${escAttr(f.reason)}">${escHtml(f.value)}</span>`;
+    else
+      hl += `<span class="pii-tag ask" title="Review — ${escAttr(f.reason)}">${escHtml(f.value)}</span>`;
+    cursor = f.end;
+  }
+  hl += escHtml(text.slice(cursor));
+  return hl;
 }
 
 // ══════════════════════════════════════════════════════════
@@ -729,10 +812,17 @@ async function scanPrompt() {
 
   await new Promise(r=>setTimeout(r,400));
 
-  const result = processPrompt(text);
-  lastSanitized = result.sanitized;
-  addToHistory(text, result.risk);
+  // Call Flask backend (saves to MongoDB automatically)
+  const result = await callAPI(text);
+  if (!result) {
+    document.getElementById('send-icon').style.display='';
+    document.getElementById('spinner').style.display='none';
+    btn.disabled=false;
+    return;
+  }
+  lastSanitized = result.sanitized || text;
   renderResult(result);
+  renderHistory();  // refresh sidebar from MongoDB
 
   // Spinner off
   document.getElementById('send-icon').style.display='';
