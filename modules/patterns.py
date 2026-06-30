@@ -101,11 +101,11 @@ PATTERNS = {
     #  The rest match compact number strings by their starting digits.
     # ----------------------------------------------------------
     "credit_card": re.compile(
-        r'\b([0-9]{4}[\s\-]){3}[0-9]{4}\b'
-        r'|\b4[0-9]{12}(?:[0-9]{3})?\b'
-        r'|\b5[1-5][0-9]{14}\b'
-        r'|\b3[47][0-9]{13}\b'
-        r'|\b6(?:011|5[0-9]{2})[0-9]{12}\b'
+        r'\b(?:\d{4}[\s\-]\d{4}[\s\-]\d{4}[\s\-]\d{1,7}'  # 4-4-4-X (Visa/MC/Discover/etc)
+        r'|\d{4}[\s\-]\d{6}[\s\-]\d{5}'                  # 4-6-5 (Amex)
+        r'|\d{4}[\s\-]\d{4}[\s\-]\d{4}[\s\-]\d{4}[\s\-]\d{1,3})\b' # 4-4-4-4-X
+        r'|'
+        r'\b(?:\d{13,19})\b'                             # Contiguous digits
     ),
 
     # ----------------------------------------------------------
@@ -439,7 +439,7 @@ if __name__ == "__main__":
         findings = detect_pii(prompt)
 
         if not findings:
-            print("  ✓ SAFE — no sensitive data detected")
+            print("  SAFE — no sensitive data detected")
         else:
             for f in findings:
                 print(f"  [{f['type'].upper():12}] \"{f['value']}\"")
